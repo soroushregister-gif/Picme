@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1b5e20">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png">
+<title>pic.me</title>
+<style>
+:root{--bg:#f4f6f4;--fg:#111;--card:#dfe5df;--pri:#1b5e20}
+@media(prefers-color-scheme:dark){:root{--bg:#121412;--fg:#eee;--card:#262b26;--pri:#43a047}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,Tahoma,sans-serif;user-select:none;-webkit-user-select:none}
+button{font:inherit;border:0;border-radius:14px;background:var(--pri);color:#fff;cursor:pointer}
+#home{height:100%;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:12px;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom))}
+#home button{font-size:1.6rem;font-weight:700;letter-spacing:1px}
+#film.rec{background:#c62828}
+#pix,#play{background:#37474f}
+.page{display:none;position:fixed;inset:0;background:var(--bg);flex-direction:column;z-index:5}
+.page.on{display:flex}
+.top{display:flex;align-items:center;gap:8px;padding:10px 12px;padding-top:calc(10px + env(safe-area-inset-top));background:var(--pri);color:#fff}
+.top b{flex:1}
+.top button{background:#0003;padding:8px 12px;border-radius:10px}
+.grid{flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:4px;padding:4px;align-content:start}
+.cell{position:relative;aspect-ratio:1;background:var(--card);overflow:hidden;border-radius:6px}
+.cell img,.cell video{width:100%;height:100%;object-fit:cover;pointer-events:none}
+.cell.sel{outline:4px solid #ffb300;outline-offset:-4px}
+.cell .ck{position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:#0006;border:2px solid #fff;display:none;color:#fff;font-size:14px;line-height:18px;text-align:center}
+.sm .ck{display:block}.cell.sel .ck{background:#ffb300;color:#000}
+.cell .pl{position:absolute;bottom:4px;right:4px;color:#fff;font-size:18px;text-shadow:0 0 4px #000}
+.empty{padding:30px;text-align:center;opacity:.55}
+#v{z-index:9;background:#000}
+#vb{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
+#vb img,#vb video{max-width:100%;max-height:100%}
+#bar{display:flex;gap:8px;padding:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+#bar button{flex:1;padding:14px}
+.red{background:#c62828!important}.gray{background:#444!important}
+#msg{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#000d;color:#fff;padding:8px 16px;border-radius:20px;display:none;z-index:20;font-size:.95rem;white-space:nowrap}
+#gear{position:fixed;top:calc(8px + env(safe-area-inset-top));left:8px;width:42px;height:42px;padding:0;background:#0000;color:var(--fg);font-size:1.5rem;opacity:.6;z-index:3}
+.set{padding:16px;display:flex;flex-direction:column;gap:12px}
+.set button{padding:16px;font-size:1.05rem}
+.set p{opacity:.65;font-size:.9rem;margin:0;line-height:1.7}
+</style>
+</head>
+<body>
+<div id="home">
+  <button id="pic">pic</button>
+  <button id="film">film</button>
+  <button id="pix">pix</button>
+  <button id="play">play</button>
+</div>
+
+<button id="gear">⚙</button>
+<div class="page" id="st">
+  <div class="top"><button id="stBack">→</button><b>تنظیمات</b></div>
+  <div class="set">
+    <button id="bk">پشتیبان‌گیری (Backup)</button>
+    <p>همه‌ی عکس‌ها و فیلم‌ها در یک فایل با پسوند picme ذخیره می‌شن. فایل رو جای امنی نگه دار.</p>
+    <button id="rs">بازیابی (Restore)</button>
+    <p>فایل پشتیبان رو انتخاب کن. موارد جدید اضافه می‌شن و موارد تکراری رد می‌شن؛ چیزی پاک نمی‌شه.</p>
+    <input type="file" id="rf" accept=".picme,application/octet-stream" hidden>
+  </div>
+</div>
+<div class="page" id="pg">
+  <div class="top"><button id="back">→</button><b id="ttl"></b>
+    <span id="selTools" style="display:none;gap:6px">
+      <button id="sAll">همه</button><button id="sSave">ذخیره</button><button id="sDel">حذف</button><button id="sX">✕</button>
+    </span></div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<div class="page" id="v"><div id="vb"></div>
+  <div id="bar"><button id="vSave">ذخیره در گالری</button><button class="red" id="vDel">حذف</button><button class="gray" id="vX">بستن</button></div>
+</div>
+<div id="msg"></div>
+<video id="hid" muted playsinline style="position:fixed;width:1px;height:1px;opacity:0;pointer-events:none"></video>
+
+<script>
+const $=id=>document.getElementById(id);
+let db,rec,chunks=[],recStream=null,kind='photo',items=[],sel=new Set(),selMode=false,cur=null,urls=[];
+const o=indexedDB.open('privcam',1);
+o.onupgradeneeded=()=>o.result.createObjectStore('m',{keyPath:'id',autoIncrement:true});
+const st=m=>db.transaction('m',m).objectStore('m');
+const getAll=()=>new Promise(r=>{const q=st('readonly').getAll();q.onsuccess=()=>r(q.result.reverse())});
+const add=x=>new Promise(r=>{const q=st('readwrite').add(x);q.onsuccess=()=>r()});
+const del=id=>new Promise(r=>{const q=st('readwrite').delete(id);q.onsuccess=()=>r()});
+function toast(t){const m=$('msg');m.textContent=t;m.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>m.style.display='none',2200)}
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+
+async function cam(audio){
+  try{return await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio})}
+  catch(e){if(audio){try{return await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}})}catch(e2){}}
+    toast('اجازه‌ی دوربین داده نشد');return null}
+}
+// pic: بدون نمایش دوربین
+$('pic').onclick=async()=>{
+  if(rec)return;
+  const s=await cam(false);if(!s)return;
+  const v=$('hid');v.srcObject=s;await v.play();await wait(700);
+  const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;
+  c.getContext('2d').drawImage(v,0,0);
+  s.getTracks().forEach(t=>t.stop());v.srcObject=null;
+  c.toBlob(async b=>{await add({type:'photo',blob:b,time:Date.now()});toast('عکس ذخیره شد')},'image/jpeg',.92);
+};
+// film: شروع/توقف
+$('film').onclick=async()=>{
+  if(rec){rec.stop();return}
+  recStream=await cam(true);if(!recStream)return;
+  const mt=['video/mp4','video/webm;codecs=vp9,opus','video/webm'].find(t=>MediaRecorder.isTypeSupported(t));
+  chunks=[];rec=new MediaRecorder(recStream,mt?{mimeType:mt}:{});
+  rec.ondataavailable=e=>e.data.size&&chunks.push(e.data);
+  rec.onstop=async()=>{
+    recStream.getTracks().forEach(t=>t.stop());
+    await add({type:'video',blob:new Blob(chunks,{type:rec.mimeType}),time:Date.now()});
+    rec=null;$('film').textContent='film';$('film').classList.remove('rec');toast('فیلم ذخیره شد');
+  };
+  rec.start();$('film').textContent='film ■';$('film').classList.add('rec');
+};
+
+// صفحه‌ی نمایش
+async function openPage(k){
+  kind=k;selMode=false;sel.clear();$('ttl').textContent=k=='photo'?'pix':'play';
+  $('pg').classList.add('on');history.pushState({p:1},'');await render();
+}
+async function render(){
+  urls.forEach(URL.revokeObjectURL);urls=[];
+  items=(await getAll()).filter(i=>i.type==kind);
+  const g=$('grid');g.innerHTML='';g.classList.toggle('sm',selMode);
+  if(!items.length){g.innerHTML='<div class="empty" style="grid-column:1/-1">خالی</div>'}
+  items.forEach(i=>{
+    const u=URL.createObjectURL(i.blob);urls.push(u);
+    const d=document.createElement('div');d.className='cell'+(sel.has(i.id)?' sel':'');
+    d.innerHTML=(kind=='photo'?`<img src="${u}">`:`<video src="${u}#t=0.1" preload="metadata" muted></video><span class="pl">▶</span>`)+'<span class="ck">'+(sel.has(i.id)?'✓':'')+'</span>';
+    let tm,long=false;
+    d.onpointerdown=()=>{long=false;tm=setTimeout(()=>{long=true;navigator.vibrate&&navigator.vibrate(30);selMode=true;toggle(i.id)},450)};
+    const stop=()=>clearTimeout(tm);d.onpointerup=stop;d.onpointerleave=stop;d.onpointermove=e=>{if(Math.abs(e.movementY)>2)stop()};
+    d.onclick=()=>{if(long)return;selMode?toggle(i.id):show(i)};
+    d.oncontextmenu=e=>e.preventDefault();
+    g.appendChild(d);
+  });
+  tools();
+}
+function toggle(id){sel.has(id)?sel.delete(id):sel.add(id);if(!sel.size)selMode=false;render()}
+function tools(){$('selTools').style.display=selMode?'flex':'none';if(selMode)$('ttl').textContent=sel.size+' انتخاب';else $('ttl').textContent=kind=='photo'?'pix':'play'}
+$('sX').onclick=()=>{selMode=false;sel.clear();render()};
+$('sAll').onclick=()=>{items.forEach(i=>sel.add(i.id));render()};
+$('sDel').onclick=async()=>{
+  if($('sDel').dataset.s!='1'){$('sDel').dataset.s='1';$('sDel').textContent='مطمئنی؟';setTimeout(()=>{$('sDel').dataset.s='0';$('sDel').textContent='حذف'},3000);return}
+  $('sDel').dataset.s='0';$('sDel').textContent='حذف';
+  for(const id of sel)await del(id);sel.clear();selMode=false;render();toast('حذف شد');
+};
+$('sSave').onclick=()=>save(items.filter(i=>sel.has(i.id)));
+$('back').onclick=()=>history.back();
+window.onpopstate=()=>{if($('v').classList.contains('on'))closeV();else{$('pg').classList.remove('on');$('st').classList.remove('on');selMode=false;sel.clear()}};
+
+// تمام‌صفحه
+function show(i){
+  cur=i;const u=URL.createObjectURL(i.blob);
+  $('vb').innerHTML=i.type=='photo'?`<img src="${u}">`:`<video src="${u}" controls autoplay playsinline></video>`;
+  $('v').classList.add('on');history.pushState({v:1},'');
+}
+function closeV(){$('vb').innerHTML='';$('v').classList.remove('on');cur=null}
+$('vX').onclick=()=>history.back();
+$('vSave').onclick=()=>save([cur]);
+$('vDel').onclick=async()=>{
+  if($('vDel').dataset.s!='1'){$('vDel').dataset.s='1';$('vDel').textContent='مطمئنی؟';setTimeout(()=>{$('vDel').dataset.s='0';$('vDel').textContent='حذف'},3000);return}
+  $('vDel').dataset.s='0';$('vDel').textContent='حذف';
+  await del(cur.id);history.back();setTimeout(render,50);toast('حذف شد');
+};
+
+// ذخیره در گالری: منوی اشتراک‌گذاری (ذخیره در دستگاه/Photos) یا دانلود
+function ext(b){return b.type.includes('mp4')?'mp4':b.type.includes('webm')?'webm':'jpg'}
+async function save(list){
+  if(!list.length)return;
+  const files=list.map(i=>new File([i.blob],'cam_'+i.time+'_'+i.id+'.'+ext(i.blob),{type:i.blob.type||'image/jpeg'}));
+  try{
+    if(navigator.canShare&&navigator.canShare({files})){await navigator.share({files});return}
+  }catch(e){if(e.name=='AbortError')return}
+  for(const f of files){const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=f.name;document.body.appendChild(a);a.click();a.remove();await wait(300)}
+  toast('دانلود شد');
+}
+$('gear').onclick=()=>{$('st').classList.add('on');history.pushState({s:1},'')};
+$('stBack').onclick=()=>history.back();
+$('bk').onclick=async()=>{
+  const all=await getAll();if(!all.length)return toast('چیزی برای پشتیبان‌گیری نیست');
+  const E=new TextEncoder(),parts=[E.encode('PICME1\n')];
+  for(const i of all){
+    const hd=E.encode(JSON.stringify({type:i.type,time:i.time,mime:i.blob.type,size:i.blob.size}));
+    const l=new Uint8Array(4);new DataView(l.buffer).setUint32(0,hd.length);parts.push(l,hd,i.blob);
+  }
+  const d=new Date().toISOString().slice(0,10);
+  const f=new File(parts,'pic.me-backup-'+d+'.picme',{type:'application/octet-stream'});
+  try{if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f]});return}}
+  catch(e){if(e.name=='AbortError')return}
+  const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=f.name;document.body.appendChild(a);a.click();a.remove();
+  toast('فایل پشتیبان دانلود شد');
+};
+$('rs').onclick=()=>$('rf').click();
+$('rf').onchange=async()=>{
+  const file=$('rf').files[0];$('rf').value='';if(!file)return;
+  const rd=async(a,b)=>new Uint8Array(await file.slice(a,b).arrayBuffer());
+  const D=new TextDecoder();
+  if(D.decode(await rd(0,7))!=='PICME1\n')return toast('فایل پشتیبان معتبر نیست');
+  const have=new Set((await getAll()).map(i=>i.type+i.time+i.blob.size));
+  let p=7,n=0;
+  try{
+    while(p+4<=file.size){
+      const l=new DataView((await rd(p,p+4)).buffer).getUint32(0);p+=4;
+      const hd=JSON.parse(D.decode(await rd(p,p+l)));p+=l;
+      if(!have.has(hd.type+hd.time+hd.size)){await add({type:hd.type,time:hd.time,blob:file.slice(p,p+hd.size,hd.mime)});n++}
+      p+=hd.size;
+    }
+    toast(n+' مورد بازیابی شد');
+  }catch(e){toast('خطا در بازیابی')}
+};
+$('pix').onclick=()=>openPage('photo');
+$('play').onclick=()=>openPage('video');
+o.onsuccess=()=>db=o.result;
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
